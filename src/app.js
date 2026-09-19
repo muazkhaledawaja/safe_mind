@@ -1,3 +1,4 @@
+const path = require('path');
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -22,7 +23,17 @@ app.use(helmet());
 app.use(cors());
 app.use(express.json());
 
-app.use('/api/docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+// Swagger UI assets are copied into the repo (see scripts/copy-swagger-assets.js)
+// because Vercel's serverless bundler omits node_modules/swagger-ui-dist (its
+// asset path is resolved at runtime, not traced). Serve them from the tracked
+// copy first; swaggerUi.serve and setup fall through for the init script/html.
+const swaggerAssetDir = path.join(__dirname, 'assets', 'swagger-ui-dist');
+app.use(
+  '/api/docs',
+  express.static(swaggerAssetDir, { index: false }),
+  swaggerUi.serve,
+  swaggerUi.setup(swaggerSpec)
+);
 
 const v1 = express.Router();
 v1.use('/auth', authRoutes);
