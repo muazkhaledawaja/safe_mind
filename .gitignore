@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Environment and secrets
+.env
+.env.*.local
+*.pem
+*.key
+*.crt
+*.p12
+*.jks
+deploy/secrets/
+
+# Docs and non-code artifacts
+CLAUDE.md
+not-code/
+
+# Test artifacts
+coverage/
