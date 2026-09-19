@@ -1,7 +1,16 @@
 const { query } = require('../../config/db');
-const { NotFoundError, ForbiddenError } = require('../../utils/errors');
+const { NotFoundError, ForbiddenError, AppError } = require('../../utils/errors');
 const { uniqueSlug } = require('../../utils/slug');
 const { toMeta } = require('../../utils/pagination');
+
+async function assertCategoryExists(categoryId) {
+  const rows = await query('SELECT id FROM categories WHERE id = ?', [categoryId]);
+  if (!rows[0]) {
+    // Don't let a missing category surface as a raw FK violation (23503) and
+    // become a generic 500. 400 with a mapping-able code is clearer.
+    throw new AppError(400, 'CATEGORY_NOT_FOUND', 'The category does not exist');
+  }
+}
 
 // Public/listing view — never exposes author_id or draft-only internals.
 function toView(row) {
@@ -91,6 +100,8 @@ async function listAll({ page, limit }) {
 }
 
 async function create(authorId, data) {
+  await assertCategoryExists(data.categoryId);
+
   const slug = await uniqueSlug(data.title, async (candidate) => {
     const rows = await query('SELECT id FROM articles WHERE slug = ?', [candidate]);
     return rows.length > 0;
@@ -119,6 +130,7 @@ async function create(authorId, data) {
 
 async function update(id, updates) {
   const current = await findById(id);
+  if (updates.categoryId !== undefined) await assertCategoryExists(updates.categoryId);
 
   const fields = [];
   const params = [];

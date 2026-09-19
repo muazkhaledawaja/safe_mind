@@ -67,6 +67,16 @@ describe('categories', () => {
 });
 
 describe('articles', () => {
+  test('creating an article with a missing category returns CATEGORY_NOT_FOUND, not a 500', async () => {
+    const admin = await adminToken();
+    const res = await request(app)
+      .post('/api/v1/articles')
+      .set('Authorization', `Bearer ${admin}`)
+      .send({ categoryId: 999999, title: 'Orphan Article', content: 'Body' });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('CATEGORY_NOT_FOUND');
+  });
+
   test('drafts are invisible to the public but visible to admin', async () => {
     const admin = await adminToken();
     const category = await createCategory(admin);

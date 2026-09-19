@@ -1,8 +1,9 @@
 // Plain SQL migration runner for Postgres/Supabase. Applies
 // db/migrations/*.sql in filename order, tracks what ran in
 // schema_migrations, and skips anything already applied.
-// `node db/migrate.js` runs migrations. `node db/migrate.js --seed` also runs
-// db/seeds/*.sql (idempotency of seeds is each seed file's own job).
+// `node db/migrate.js` runs migrations and then applies db/seeds/*.sql (all
+// seed files are idempotent — categories.sql is ON CONFLICT DO NOTHING).
+// `--seed` is accepted for backwards compatibility.
 const fs = require('fs');
 const path = require('path');
 const { Client } = require('pg');
@@ -37,13 +38,15 @@ async function run() {
       await client.query('INSERT INTO schema_migrations (name) VALUES ($1)', [file]);
     }
 
-    if (process.argv.includes('--seed')) {
-      const seedFiles = fs.readdirSync(SEEDS_DIR).filter((f) => f.endsWith('.sql')).sort();
-      for (const file of seedFiles) {
-        console.log(`seed  ${file}`);
-        const sql = fs.readFileSync(path.join(SEEDS_DIR, file), 'utf-8');
-        await client.query(sql);
-      }
+    // Always run SQL seeds (idempotent by design). This is the only way a
+    // fresh production DB gets its category rows — a DB created from
+    // schema.sql alone has no categories, and article creation failed with a
+    // raw FK violation because of it.
+    const seedFiles = fs.readdirSync(SEEDS_DIR).filter((f) => f.endsWith('.sql')).sort();
+    for (const file of seedFiles) {
+      console.log(`seed  ${file}`);
+      const sql = fs.readFileSync(path.join(SEEDS_DIR, file), 'utf-8');
+      await client.query(sql);
     }
   } finally {
     await client.end();

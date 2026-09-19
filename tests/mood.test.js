@@ -3,14 +3,22 @@ jest.mock('../src/config/mailer', () => require('./__mocks__/mailer'));
 const request = require('supertest');
 const app = require('../src/app');
 
+// The API stores log_date in the server's local timezone (pg serialises a JS
+// Date to the local calendar day). toISOString() would be UTC and drift off
+// by one day around midnight, so format in local time instead.
+function toLocalDate(d) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
 function today() {
-  return new Date().toISOString().slice(0, 10);
+  return toLocalDate(new Date());
 }
 
 function yesterday() {
   const d = new Date();
   d.setDate(d.getDate() - 1);
-  return d.toISOString().slice(0, 10);
+  return toLocalDate(d);
 }
 
 async function registerAndGetToken(email = 'user@example.com') {
