@@ -170,7 +170,7 @@ async function getStats() {
     query("SELECT COUNT(*) AS total_specialists FROM specialists WHERE verification_status = 'approved'"),
     query("SELECT COUNT(*) AS total_articles FROM articles WHERE status = 'published'"),
     query('SELECT status, COUNT(*) AS count FROM appointments GROUP BY status'),
-    query('SELECT COUNT(*) AS alerts_last_30_days FROM emergency_alerts WHERE sent_at > DATE_SUB(NOW(), INTERVAL 30 DAY)'),
+    query('SELECT COUNT(*) AS alerts_last_30_days FROM emergency_alerts WHERE sent_at > NOW() - interval \'30 day\''),
   ]);
 
   const appointmentCounts = { pending: 0, accepted: 0, rejected: 0, cancelled: 0, completed: 0 };

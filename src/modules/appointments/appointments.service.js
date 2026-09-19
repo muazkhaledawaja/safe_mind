@@ -1,4 +1,4 @@
-const { query, pool } = require('../../config/db');
+const { query, getConnection } = require('../../config/db');
 const { sendMail } = require('../../config/mailer');
 const logger = require('../../utils/logger');
 const { NotFoundError, ForbiddenError, ConflictError } = require('../../utils/errors');
@@ -62,11 +62,11 @@ async function create(userId, data) {
 
   const result = await query(
     `INSERT INTO appointments (user_id, specialist_id, scheduled_at, duration_min, user_note)
-     VALUES (?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?) RETURNING id`,
     [userId, data.specialistId, data.scheduledAt, data.durationMin, data.userNote || null]
   );
 
-  const appointment = await findById(result.insertId);
+  const appointment = await findById(result[0].id);
   await notifyStatusChange(
     appointment,
     'New appointment request — Safe Mind',
@@ -78,11 +78,11 @@ async function create(userId, data) {
 // Accept/reject, with the overlap check applied only on accept — a pending
 // request never blocks another pending request for the same slot.
 async function respond(specialistUserId, appointmentId, { decision, responseNote }) {
-  const conn = await pool.getConnection();
+  const conn = await getConnection();
   try {
     await conn.beginTransaction();
 
-    const [rows] = await conn.query('SELECT * FROM appointments WHERE id = ? FOR UPDATE', [appointmentId]);
+    const rows = await conn.query('SELECT * FROM appointments WHERE id = ? FOR UPDATE', [appointmentId]);
     const appointment = rows[0];
     if (!appointment) throw new NotFoundError('Appointment not found');
 
@@ -95,11 +95,11 @@ async function respond(specialistUserId, appointmentId, { decision, responseNote
     }
 
     if (decision === 'accepted') {
-      const [overlaps] = await conn.query(
+      const overlaps = await conn.query(
         `SELECT id FROM appointments
          WHERE specialist_id = ? AND status = 'accepted' AND id != ?
-           AND scheduled_at < DATE_ADD(?, INTERVAL ? MINUTE)
-           AND DATE_ADD(scheduled_at, INTERVAL duration_min MINUTE) > ?`,
+           AND scheduled_at < (?::timestamptz + (? * interval '1 minute'))
+           AND (scheduled_at + (duration_min * interval '1 minute')) > ?`,
         [
           appointment.specialist_id,
           appointmentId,
@@ -122,7 +122,8 @@ async function respond(specialistUserId, appointmentId, { decision, responseNote
       await conn.query(
         `INSERT INTO conversations (user_id, specialist_id, appointment_id)
          VALUES (?, ?, ?)
-         ON DUPLICATE KEY UPDATE appointment_id = VALUES(appointment_id)`,
+         ON CONFLICT (user_id, specialist_id)
+         DO UPDATE SET appointment_id = EXCLUDED.appointment_id`,
         [appointment.user_id, appointment.specialist_id, appointmentId]
       );
     }

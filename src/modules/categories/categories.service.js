@@ -32,11 +32,11 @@ async function create(data) {
   });
 
   const result = await query(
-    'INSERT INTO categories (name_ar, name_en, slug, description, sort_order) VALUES (?, ?, ?, ?, ?)',
+    'INSERT INTO categories (name_ar, name_en, slug, description, sort_order) VALUES (?, ?, ?, ?, ?) RETURNING id',
     [data.nameAr, data.nameEn, slug, data.description || null, data.sortOrder]
   );
 
-  return toView(await findById(result.insertId));
+  return toView(await findById(result[0].id));
 }
 
 async function update(id, updates) {
@@ -63,8 +63,8 @@ async function remove(id) {
     await query('DELETE FROM categories WHERE id = ?', [id]);
   } catch (err) {
     // fk_articles_category is ON DELETE RESTRICT — a category with articles
-    // cannot be deleted, by design.
-    if (err.code === 'ER_ROW_IS_REFERENCED_2') {
+    // cannot be deleted, by design. 23503 is Postgres' foreign_key_violation.
+    if (err.code === '23503') {
       throw new ConflictError('CATEGORY_IN_USE', 'This category still has articles and cannot be deleted');
     }
     throw err;

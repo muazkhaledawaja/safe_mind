@@ -3,11 +3,13 @@
 // Run with: node db/seeds/demo.js — safe to re-run, every insert is guarded
 // by an existence check.
 require('dotenv').config();
-const bcrypt = require('bcrypt');
 const { pool, query } = require('../../src/config/db');
+const { admin } = require('../../src/config/supabase');
 
 const DEMO_PASSWORD = 'password123';
 
+// Creates both halves of an account: the Supabase Auth user (so the demo
+// password really logs in) and the Safe Mind users row linked by auth_uid.
 async function ensureUser({ nickname, email, role = 'user', fullName = null }) {
   const existing = await query('SELECT id FROM users WHERE email = ?', [email]);
   if (existing.length > 0) {
@@ -15,12 +17,18 @@ async function ensureUser({ nickname, email, role = 'user', fullName = null }) {
     return existing[0].id;
   }
 
-  const passwordHash = await bcrypt.hash(DEMO_PASSWORD, 12);
+  const { data, error } = await admin.auth.admin.createUser({
+    email,
+    password: DEMO_PASSWORD,
+    email_confirm: true,
+  });
+  if (error) throw error;
+
   const result = await query(
-    'INSERT INTO users (nickname, full_name, email, password_hash, role) VALUES (?, ?, ?, ?, ?)',
-    [nickname, fullName, email, passwordHash, role]
+    'INSERT INTO users (nickname, full_name, email, role, auth_uid) VALUES (?, ?, ?, ?, ?) RETURNING id',
+    [nickname, fullName, email, role, data.user.id]
   );
-  return result.insertId;
+  return result[0].id;
 }
 
 async function ensureSpecialist(userId, { specialization, status, adminId, bio = null, years = 5 }) {
@@ -29,7 +37,7 @@ async function ensureSpecialist(userId, { specialization, status, adminId, bio =
 
   const result = await query(
     `INSERT INTO specialists (user_id, specialization, bio, years_experience, verification_status, verified_by, verified_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`,
     [
       userId,
       specialization,
@@ -40,7 +48,7 @@ async function ensureSpecialist(userId, { specialization, status, adminId, bio =
       status === 'pending' ? null : new Date(),
     ]
   );
-  return result.insertId;
+  return result[0].id;
 }
 
 async function ensureArticle({ categorySlug, authorId, title, slug, excerpt, content, status }) {
@@ -52,10 +60,10 @@ async function ensureArticle({ categorySlug, authorId, title, slug, excerpt, con
 
   const result = await query(
     `INSERT INTO articles (category_id, author_id, title, slug, excerpt, content, status, published_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
     [category.id, authorId, title, slug, excerpt, content, status, status === 'published' ? new Date() : null]
   );
-  return result.insertId;
+  return result[0].id;
 }
 
 async function ensureMoodLog(userId, { daysAgo, moodLevel, stressLevel, sleepQuality, sleepHours, note }) {
@@ -68,10 +76,10 @@ async function ensureMoodLog(userId, { daysAgo, moodLevel, stressLevel, sleepQua
 
   const result = await query(
     `INSERT INTO mood_logs (user_id, log_date, mood_level, stress_level, sleep_quality, sleep_hours, note)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`,
     [userId, dateStr, moodLevel, stressLevel, sleepQuality, sleepHours, note]
   );
-  return result.insertId;
+  return result[0].id;
 }
 
 async function ensureEmergencyContact(userId, { name, email, phone, relationship, isPrimary }) {
@@ -83,10 +91,10 @@ async function ensureEmergencyContact(userId, { name, email, phone, relationship
 
   const result = await query(
     `INSERT INTO emergency_contacts (user_id, name, phone, email, relationship, is_primary)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?) RETURNING id`,
     [userId, name, phone, email, relationship, isPrimary]
   );
-  return result.insertId;
+  return result[0].id;
 }
 
 // Keyed on (user, specialist, status) rather than the computed scheduled_at
@@ -103,7 +111,7 @@ async function ensureAppointment({ userId, specialistId, hoursFromNow, durationM
 
   const result = await query(
     `INSERT INTO appointments (user_id, specialist_id, scheduled_at, duration_min, status, user_note, responded_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id`,
     [
       userId,
       specialistId,
@@ -114,7 +122,7 @@ async function ensureAppointment({ userId, specialistId, hoursFromNow, durationM
       status === 'pending' ? null : new Date(),
     ]
   );
-  return result.insertId;
+  return result[0].id;
 }
 
 async function ensureConversation({ userId, specialistId, appointmentId }) {
@@ -125,10 +133,10 @@ async function ensureConversation({ userId, specialistId, appointmentId }) {
   if (existing.length > 0) return existing[0].id;
 
   const result = await query(
-    'INSERT INTO conversations (user_id, specialist_id, appointment_id) VALUES (?, ?, ?)',
+    'INSERT INTO conversations (user_id, specialist_id, appointment_id) VALUES (?, ?, ?) RETURNING id',
     [userId, specialistId, appointmentId]
   );
-  return result.insertId;
+  return result[0].id;
 }
 
 async function ensureMessage({ conversationId, senderId, body, isRead = false }) {
@@ -139,11 +147,11 @@ async function ensureMessage({ conversationId, senderId, body, isRead = false })
   if (existing.length > 0) return existing[0].id;
 
   const result = await query(
-    'INSERT INTO messages (conversation_id, sender_id, body, is_read, read_at) VALUES (?, ?, ?, ?, ?)',
+    'INSERT INTO messages (conversation_id, sender_id, body, is_read, read_at) VALUES (?, ?, ?, ?, ?) RETURNING id',
     [conversationId, senderId, body, isRead, isRead ? new Date() : null]
   );
   await query('UPDATE conversations SET last_message_at = NOW() WHERE id = ?', [conversationId]);
-  return result.insertId;
+  return result[0].id;
 }
 
 async function run() {
@@ -198,7 +206,7 @@ async function run() {
 
   // Deactivate one user so GET /admin/users and the ACCOUNT_INACTIVE login
   // path both have something real to show.
-  await query('UPDATE users SET is_active = 0 WHERE id = ?', [inactiveUserId]);
+  await query('UPDATE users SET is_active = FALSE WHERE id = ?', [inactiveUserId]);
 
   // --- Categories + articles ----------------------------------------------
   await ensureArticle({

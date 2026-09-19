@@ -2,7 +2,7 @@ jest.mock('../src/config/mailer', () => require('./__mocks__/mailer'));
 
 const request = require('supertest');
 const app = require('../src/app');
-const { pool } = require('../src/config/db');
+const { query } = require('../src/config/db');
 
 describe('auth', () => {
   const credentials = { nickname: 'Sara', email: 'sara@example.com', password: 'password1' };
@@ -77,8 +77,8 @@ describe('auth', () => {
       .send({ email: credentials.email });
     expect(forgotRes.status).toBe(200);
 
-    const [row] = await pool.query('SELECT reset_token FROM users WHERE email = ?', [credentials.email]);
-    const token = row[0].reset_token;
+    const rows = await query('SELECT reset_token FROM users WHERE email = ?', [credentials.email]);
+    const token = rows[0].reset_token;
     expect(token).toBeTruthy();
 
     const resetRes = await request(app)

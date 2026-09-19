@@ -1,4 +1,4 @@
-const { query, pool } = require('../../config/db');
+const { query, getConnection } = require('../../config/db');
 const { sendMail } = require('../../config/mailer');
 const { writeAudit } = require('../../utils/audit');
 const logger = require('../../utils/logger');
@@ -45,32 +45,35 @@ async function createContact(userId, data) {
 }
 
 async function insertContact(userId, data) {
-  const conn = await pool.getConnection();
+  const conn = await getConnection();
   try {
     await conn.beginTransaction();
 
-    const [existingRows] = await conn.query(
-      'SELECT COUNT(*) AS count FROM emergency_contacts WHERE user_id = ? FOR UPDATE',
+    // Lock the parent user row to serialize concurrent contact inserts for the
+// same user (Postgres forbids FOR UPDATE on aggregate queries).
+    await conn.query('SELECT id FROM users WHERE id = ? FOR UPDATE', [userId]);
+    const countRows = await conn.query(
+      'SELECT COUNT(*) AS count FROM emergency_contacts WHERE user_id = ?',
       [userId]
     );
-    if (existingRows[0].count >= MAX_CONTACTS) {
+    if (countRows[0].count >= MAX_CONTACTS) {
       throw new ConflictError('CONTACT_LIMIT_REACHED', `You can have at most ${MAX_CONTACTS} emergency contacts`);
     }
 
     // First contact is always primary; otherwise honor the request and
     // demote any previous primary so exactly one stays true.
-    const isPrimary = existingRows[0].count === 0 ? true : !!data.isPrimary;
+    const isPrimary = countRows[0].count === 0 ? true : !!data.isPrimary;
     if (isPrimary) {
-      await conn.query('UPDATE emergency_contacts SET is_primary = 0 WHERE user_id = ?', [userId]);
+      await conn.query('UPDATE emergency_contacts SET is_primary = FALSE WHERE user_id = ?', [userId]);
     }
 
-    const [result] = await conn.query(
-      'INSERT INTO emergency_contacts (user_id, name, phone, email, relationship, is_primary) VALUES (?, ?, ?, ?, ?, ?)',
+    const rows = await conn.query(
+      'INSERT INTO emergency_contacts (user_id, name, phone, email, relationship, is_primary) VALUES (?, ?, ?, ?, ?, ?) RETURNING id',
       [userId, data.name, data.phone || null, data.email, data.relationship || null, isPrimary]
     );
 
     await conn.commit();
-    return result.insertId;
+    return rows[0].id;
   } catch (err) {
     await conn.rollback();
     throw err;
@@ -82,12 +85,12 @@ async function insertContact(userId, data) {
 async function updateContact(userId, contactId, updates) {
   await findOwnContact(userId, contactId);
 
-  const conn = await pool.getConnection();
+  const conn = await getConnection();
   try {
     await conn.beginTransaction();
 
     if (updates.isPrimary === true) {
-      await conn.query('UPDATE emergency_contacts SET is_primary = 0 WHERE user_id = ?', [userId]);
+      await conn.query('UPDATE emergency_contacts SET is_primary = FALSE WHERE user_id = ?', [userId]);
     }
 
     const fields = [];
@@ -127,7 +130,7 @@ async function deleteContact(userId, contactId) {
       [userId]
     );
     if (remaining[0]) {
-      await query('UPDATE emergency_contacts SET is_primary = 1 WHERE id = ?', [remaining[0].id]);
+      await query('UPDATE emergency_contacts SET is_primary = TRUE WHERE id = ?', [remaining[0].id]);
     }
   }
 }
@@ -137,7 +140,7 @@ async function deleteContact(userId, contactId) {
 // pressing the button. Nothing else in the codebase may call this.
 async function sendAlert(userId, ip) {
   const [{ count: recentCount }] = await query(
-    'SELECT COUNT(*) AS count FROM emergency_alerts WHERE user_id = ? AND sent_at > DATE_SUB(NOW(), INTERVAL 1 HOUR)',
+    'SELECT COUNT(*) AS count FROM emergency_alerts WHERE user_id = ? AND sent_at > NOW() - interval \'1 hour\'',
     [userId]
   );
 
@@ -150,7 +153,7 @@ async function sendAlert(userId, ip) {
   }
 
   const contactRows = await query(
-    'SELECT id, name, email FROM emergency_contacts WHERE user_id = ? AND is_primary = 1',
+    'SELECT id, name, email FROM emergency_contacts WHERE user_id = ? AND is_primary = TRUE',
     [userId]
   );
   const contact = contactRows[0];
@@ -176,7 +179,7 @@ async function sendAlert(userId, ip) {
   }
 
   const result = await query(
-    'INSERT INTO emergency_alerts (user_id, contact_id, status, error_message, ip_address) VALUES (?, ?, ?, ?, ?)',
+    'INSERT INTO emergency_alerts (user_id, contact_id, status, error_message, ip_address) VALUES (?, ?, ?, ?, ?) RETURNING id',
     [userId, contact.id, status, errorMessage, ip || null]
   );
 
@@ -184,7 +187,7 @@ async function sendAlert(userId, ip) {
     actorId: userId,
     action: 'emergency_alert_dispatch',
     entityType: 'emergency_alert',
-    entityId: result.insertId,
+    entityId: result[0].id,
     metadata: { status },
     ip,
   });

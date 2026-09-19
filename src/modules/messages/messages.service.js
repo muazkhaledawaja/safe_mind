@@ -1,7 +1,6 @@
 const { query } = require('../../config/db');
 const { NotFoundError, ForbiddenError } = require('../../utils/errors');
 const { toMeta } = require('../../utils/pagination');
-const { emitToConversation } = require('../../sockets/emitter');
 
 function conversationView(row) {
   return {
@@ -83,15 +82,13 @@ async function sendMessage(userId, userRole, conversationId, body) {
   await findOwnConversation(userId, userRole, conversationId);
 
   const result = await query(
-    'INSERT INTO messages (conversation_id, sender_id, body) VALUES (?, ?, ?)',
+    'INSERT INTO messages (conversation_id, sender_id, body) VALUES (?, ?, ?) RETURNING id',
     [conversationId, userId, body]
   );
   await query('UPDATE conversations SET last_message_at = NOW() WHERE id = ?', [conversationId]);
 
-  const rows = await query('SELECT * FROM messages WHERE id = ?', [result.insertId]);
-  const message = messageView(rows[0]);
-  emitToConversation(message.conversationId, 'message:new', message);
-  return message;
+  const rows = await query('SELECT * FROM messages WHERE id = ?', [result[0].id]);
+  return messageView(rows[0]);
 }
 
 // Marking read only requires being a participant of the message's
@@ -104,17 +101,15 @@ async function markRead(userId, userRole, messageId) {
 
   await findOwnConversation(userId, userRole, message.conversation_id);
 
-  const result = await query(
-    'UPDATE messages SET is_read = 1, read_at = NOW() WHERE id = ? AND is_read = 0',
+  // Only announce a real transition: RETURNING gives us rows only when the
+  // row actually flipped, so an already-read message reports no change.
+  const updated = await query(
+    'UPDATE messages SET is_read = TRUE, read_at = NOW() WHERE id = ? AND is_read = FALSE RETURNING id',
     [messageId]
   );
-  const updated = await query('SELECT * FROM messages WHERE id = ?', [messageId]);
-  const updatedMessage = messageView(updated[0]);
-  // Only announce a real transition — marking an already-read message changes nothing.
-  if (result.affectedRows > 0) {
-    emitToConversation(updatedMessage.conversationId, 'message:read', updatedMessage);
-  }
-  return updatedMessage;
+
+  const refreshed = await query('SELECT * FROM messages WHERE id = ?', [messageId]);
+  return messageView(refreshed[0]);
 }
 
 async function unreadCount(userId, userRole) {
@@ -125,14 +120,14 @@ async function unreadCount(userId, userRole) {
     rows = await query(
       `SELECT COUNT(*) AS count FROM messages m
        JOIN conversations c ON c.id = m.conversation_id
-       WHERE c.specialist_id = ? AND m.sender_id != ? AND m.is_read = 0`,
+       WHERE c.specialist_id = ? AND m.sender_id != ? AND m.is_read = FALSE`,
       [specialistRows[0].id, userId]
     );
   } else {
     rows = await query(
       `SELECT COUNT(*) AS count FROM messages m
        JOIN conversations c ON c.id = m.conversation_id
-       WHERE c.user_id = ? AND m.sender_id != ? AND m.is_read = 0`,
+       WHERE c.user_id = ? AND m.sender_id != ? AND m.is_read = FALSE`,
       [userId, userId]
     );
   }

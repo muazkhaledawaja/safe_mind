@@ -15,10 +15,11 @@ function toView(row) {
   };
 }
 
-// mysql2 returns DATE columns as JS Date objects at local midnight. Format
-// using local getters, not toISOString() (which converts to UTC and can
-// shift the date by a day depending on the server's timezone offset).
+// pg returns DATE as a string and TIMESTAMPTZ as a Date. Format either into a
+// 'YYYY-MM-DD' key. For Date inputs use local getters, not toISOString()
+// (which converts to UTC and can shift the date by a day).
 function toDateString(date) {
+  if (typeof date === 'string') return date.slice(0, 10);
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, '0');
   const d = String(date.getDate()).padStart(2, '0');
@@ -100,11 +101,11 @@ const RANGE_DAYS = { '7d': 7, '30d': 30, '90d': 90 };
 
 async function summary(userId, { range, groupBy }) {
   const days = RANGE_DAYS[range];
-  const dateExpr = groupBy === 'week' ? 'YEARWEEK(log_date, 3)' : 'log_date';
+  const bucketExpr = groupBy === 'week' ? 'date_trunc(\'week\', log_date)' : 'log_date';
 
   const rows = await query(
     `SELECT
-       ${dateExpr} AS bucket,
+       ${bucketExpr} AS bucket,
        MIN(log_date) AS bucket_start,
        COUNT(*) AS entries,
        AVG(mood_level) AS avg_mood,
@@ -112,7 +113,7 @@ async function summary(userId, { range, groupBy }) {
        AVG(sleep_quality) AS avg_sleep_quality,
        AVG(sleep_hours) AS avg_sleep_hours
      FROM mood_logs
-     WHERE user_id = ? AND log_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)
+     WHERE user_id = ? AND log_date >= CURRENT_DATE - (?::int * interval '1 day')
      GROUP BY bucket
      ORDER BY bucket_start ASC`,
     [userId, days]

@@ -1,8 +1,6 @@
-const bcrypt = require('bcrypt');
 const { query } = require('../../config/db');
+const { admin, anon } = require('../../config/supabase');
 const { NotFoundError, ConflictError } = require('../../utils/errors');
-
-const BCRYPT_COST = 12;
 
 // Maps a raw `users` row to the self-view shape. fullName only ever appears
 // here — never in any endpoint that returns another user (CLAUDE.md rule 7).
@@ -20,7 +18,7 @@ function toSelfView(row) {
 
 async function findById(id) {
   const rows = await query(
-    'SELECT id, nickname, full_name, email, role, is_active, created_at FROM users WHERE id = ?',
+    'SELECT id, nickname, full_name, email, role, is_active, created_at, auth_uid FROM users WHERE id = ?',
     [id]
   );
   if (!rows[0]) throw new NotFoundError('User not found');
@@ -31,18 +29,31 @@ async function getMe(id) {
   return toSelfView(await findById(id));
 }
 
-async function updateMe(id, updates) {
-  await findById(id); // 404s if the user doesn't exist
+// True if the Supabase Auth account was created with an email/password
+// identity (as opposed to a Google-only account that has no password).
+async function hasPasswordIdentity(authUid) {
+  const { data, error } = await admin.auth.admin.getUserById(authUid);
+  if (error || !data.user) return false;
+  return data.user.identities.some((identity) => identity.provider === 'email');
+}
 
+async function updateMe(id, updates) {
+  const user = await findById(id); // 404s if the user doesn't exist
+
+  // Password changes happen at the Supabase Auth layer, which owns the hash.
   if (updates.password) {
-    // password_hash isn't selected by findById; fetch it separately to keep
-    // the hash out of every other query in this file.
-    const [{ password_hash }] = await query('SELECT password_hash FROM users WHERE id = ?', [id]);
-    // Google-only accounts have no password_hash yet — first password set skips the check.
-    if (password_hash) {
-      const ok = await bcrypt.compare(updates.currentPassword, password_hash);
-      if (!ok) throw new ConflictError('INVALID_PASSWORD', 'Current password is incorrect');
+    if (await hasPasswordIdentity(user.auth_uid)) {
+      // Google-only accounts are created by Supabase without a password and
+      // skip the current-password check, mirroring the old password_hash logic.
+      const { error } = await anon.auth.signInWithPassword({
+        email: user.email,
+        password: updates.currentPassword,
+      });
+      if (error) {
+        throw new ConflictError('INVALID_PASSWORD', 'Current password is incorrect');
+      }
     }
+    await admin.auth.admin.updateUserById(user.auth_uid, { password: updates.password });
   }
 
   const fields = [];
@@ -55,10 +66,6 @@ async function updateMe(id, updates) {
     fields.push('full_name = ?');
     params.push(updates.fullName);
   }
-  if (updates.password) {
-    fields.push('password_hash = ?');
-    params.push(await bcrypt.hash(updates.password, BCRYPT_COST));
-  }
 
   if (fields.length > 0) {
     params.push(id);
@@ -68,4 +75,4 @@ async function updateMe(id, updates) {
   return getMe(id);
 }
 
-module.exports = { toSelfView, findById, getMe, updateMe, BCRYPT_COST };
+module.exports = { toSelfView, findById, getMe, updateMe };

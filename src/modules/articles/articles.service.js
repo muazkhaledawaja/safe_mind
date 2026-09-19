@@ -21,17 +21,11 @@ function toView(row) {
   };
 }
 
-// Builds a MATCH ... AGAINST boolean-mode expression from free text. Strips
-// boolean-mode operators the caller didn't intend and appends `*` to each
-// term for prefix matching, since ngram-parsed Arabic content otherwise only
-// matches on exact n-grams.
-function toBooleanSearch(text) {
-  return text
-    .replace(/[+\-<>()~*"@]+/g, ' ')
-    .trim()
-    .split(/\s+/)
-    .map((term) => `+${term}*`)
-    .join(' ');
+// Escapes LIKE metacharacters in free-text input for an ILIKE search. Used
+// instead of a full-text index: pg_trgm gives Arabic substring matching that
+// similar to MySQL is ngram-based and prefix (not exact-token) matching.
+function toLikePattern(text) {
+  return `%${text.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
 }
 
 async function findById(id) {
@@ -72,8 +66,8 @@ async function listPublished({ page, limit, search, category }) {
   }
 
   if (search) {
-    where.push('MATCH(title, excerpt, content) AGAINST (? IN BOOLEAN MODE)');
-    params.push(toBooleanSearch(search));
+    where.push('(title ILIKE ? OR excerpt ILIKE ? OR content ILIKE ?)');
+    params.push(toLikePattern(search), toLikePattern(search), toLikePattern(search));
   }
 
   const whereSql = ` WHERE ${where.join(' AND ')}`;
@@ -106,7 +100,7 @@ async function create(authorId, data) {
 
   const result = await query(
     `INSERT INTO articles (category_id, author_id, title, slug, excerpt, content, cover_image, status, published_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
     [
       data.categoryId,
       authorId,
@@ -120,7 +114,7 @@ async function create(authorId, data) {
     ]
   );
 
-  return toView(await findById(result.insertId));
+  return toView(await findById(result[0].id));
 }
 
 async function update(id, updates) {

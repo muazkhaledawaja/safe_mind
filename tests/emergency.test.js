@@ -2,7 +2,7 @@ jest.mock('../src/config/mailer', () => require('./__mocks__/mailer'));
 
 const request = require('supertest');
 const app = require('../src/app');
-const { pool } = require('../src/config/db');
+const { query } = require('../src/config/db');
 const mailer = require('./__mocks__/mailer');
 
 async function registerAndGetToken(email = 'user@example.com') {
@@ -107,7 +107,7 @@ describe('emergency alert', () => {
     expect(mailer.sendMail).toHaveBeenCalledTimes(1);
     expect(mailer.sendMail.mock.calls[0][0].to).toBe('mom@example.com');
 
-    const [rows] = await pool.query('SELECT status FROM emergency_alerts');
+    const rows = await query('SELECT status FROM emergency_alerts');
     expect(rows).toHaveLength(1);
     expect(rows[0].status).toBe('sent');
   });
@@ -132,7 +132,7 @@ describe('emergency alert', () => {
     expect(res.status).toBe(200);
     expect(res.body.data.status).toBe('failed');
 
-    const [rows] = await pool.query('SELECT status, error_message FROM emergency_alerts');
+    const rows = await query('SELECT status, error_message FROM emergency_alerts');
     expect(rows[0].status).toBe('failed');
     expect(rows[0].error_message).toContain('smtp down');
   });
@@ -152,7 +152,7 @@ describe('emergency alert', () => {
     expect(res.status).toBe(429);
     expect(res.body.error.code).toBe('RATE_LIMITED');
 
-    const [rows] = await pool.query('SELECT status FROM emergency_alerts');
+    const rows = await query('SELECT status FROM emergency_alerts');
     expect(rows).toHaveLength(4);
     expect(rows.filter((r) => r.status === 'rate_limited')).toHaveLength(1);
   });

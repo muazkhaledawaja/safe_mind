@@ -28,11 +28,11 @@ async function apply(userId, data) {
 
   const result = await query(
     `INSERT INTO specialists (user_id, specialization, bio, license_number, years_experience)
-     VALUES (?, ?, ?, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?) RETURNING id`,
     [userId, data.specialization, data.bio || null, data.licenseNumber || null, data.yearsExperience ?? null]
   );
 
-  return findByIdForAdmin(result.insertId);
+  return findByIdForAdmin(result[0].id);
 }
 
 // Public listing: approved specialists only, optional specialization filter.

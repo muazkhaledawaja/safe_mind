@@ -10,23 +10,21 @@
     "migrate": "node db/migrate.js",
     "seed": "node db/migrate.js --seed",
     "seed:demo": "node db/seeds/demo.js",
-    "test": "jest --runInBand"
+    "test": "jest --runInBand --forceExit"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
-    "bcrypt": "^5.1.1",
+    "@supabase/supabase-js": "^2.116.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.19.2",
     "express-rate-limit": "^7.4.0",
     "google-auth-library": "^11.0.2",
     "helmet": "^7.1.0",
-    "jsonwebtoken": "^9.0.2",
-    "mysql2": "^3.11.0",
     "nodemailer": "^6.9.14",
-    "socket.io": "^4.8.1",
+    "pg": "^8.23.0",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.1",
     "zod": "^3.23.8"
@@ -34,7 +32,6 @@
   "devDependencies": {
     "jest": "^29.7.0",
     "nodemon": "^3.1.4",
-    "socket.io-client": "^4.8.1",
     "supertest": "^7.0.0"
   }
 }

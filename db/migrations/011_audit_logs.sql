@@ -1,15 +1,16 @@
 -- Migration: 011_audit_logs
 CREATE TABLE audit_logs (
-  id          INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-  actor_id    INT UNSIGNED NULL,
+  id          BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  actor_id    BIGINT,
   action      VARCHAR(100) NOT NULL,
   entity_type VARCHAR(50)  NOT NULL,
-  entity_id   INT UNSIGNED NULL,
-  metadata    JSON NULL,
-  ip_address  VARCHAR(45) NULL,
-  created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  KEY idx_audit_actor (actor_id, created_at),
-  KEY idx_audit_entity (entity_type, entity_id),
+  entity_id   BIGINT,
+  metadata    JSONB,
+  ip_address  VARCHAR(45),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT fk_audit_actor
     FOREIGN KEY (actor_id) REFERENCES users(id) ON DELETE SET NULL
-) ENGINE=InnoDB;
+);
+
+CREATE INDEX idx_audit_actor ON audit_logs (actor_id, created_at);
+CREATE INDEX idx_audit_entity ON audit_logs (entity_type, entity_id);
