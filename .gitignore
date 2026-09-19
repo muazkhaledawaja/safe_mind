@@ -14,6 +14,9 @@ deploy/secrets/
 # Docs and non-code artifacts
 CLAUDE.md
 not-code/
+docs/superpowers/
 
 # Test artifacts
 coverage/
+
+docs/websocket.md

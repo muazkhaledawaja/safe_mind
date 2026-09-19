@@ -1,6 +1,7 @@
 const { query } = require('../../config/db');
 const { NotFoundError, ForbiddenError } = require('../../utils/errors');
 const { toMeta } = require('../../utils/pagination');
+const { emitToConversation } = require('../../sockets/emitter');
 
 function conversationView(row) {
   return {
@@ -88,7 +89,9 @@ async function sendMessage(userId, userRole, conversationId, body) {
   await query('UPDATE conversations SET last_message_at = NOW() WHERE id = ?', [conversationId]);
 
   const rows = await query('SELECT * FROM messages WHERE id = ?', [result.insertId]);
-  return messageView(rows[0]);
+  const message = messageView(rows[0]);
+  emitToConversation(message.conversationId, 'message:new', message);
+  return message;
 }
 
 // Marking read only requires being a participant of the message's
@@ -101,9 +104,17 @@ async function markRead(userId, userRole, messageId) {
 
   await findOwnConversation(userId, userRole, message.conversation_id);
 
-  await query('UPDATE messages SET is_read = 1, read_at = NOW() WHERE id = ? AND is_read = 0', [messageId]);
+  const result = await query(
+    'UPDATE messages SET is_read = 1, read_at = NOW() WHERE id = ? AND is_read = 0',
+    [messageId]
+  );
   const updated = await query('SELECT * FROM messages WHERE id = ?', [messageId]);
-  return messageView(updated[0]);
+  const updatedMessage = messageView(updated[0]);
+  // Only announce a real transition — marking an already-read message changes nothing.
+  if (result.affectedRows > 0) {
+    emitToConversation(updatedMessage.conversationId, 'message:read', updatedMessage);
+  }
+  return updatedMessage;
 }
 
 async function unreadCount(userId, userRole) {
@@ -128,4 +139,4 @@ async function unreadCount(userId, userRole) {
   return rows[0].count;
 }
 
-module.exports = { listForCaller, listMessages, sendMessage, markRead, unreadCount };
+module.exports = { listForCaller, listMessages, sendMessage, markRead, unreadCount, findOwnConversation };
